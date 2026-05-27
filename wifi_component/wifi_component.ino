@@ -6,14 +6,15 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
+#include <HardwareSerial.h>
 
 #define ENABLE_SMTP
 #define ENABLE_DEBUG
 #include <ReadyMail.h>
 
 // REPLACE WITH YOUR NETWORK CREDENTIALS
-const char* ssid = "wifi name";
-const char* password = "wifi password";
+const char* ssid = "a";
+const char* password = "b";
 
 // Sender SMTP settings (GMAIL)
 // Change if using a different provider
@@ -26,14 +27,26 @@ const char* password = "wifi password";
 #define AUTHOR_NAME "STEAM Team"
 
 //Recipient's email
-#define RECIPIENT_EMAIL "cent-steamteam@outlook.com"
+#define RECIPIENT_EMAIL "potatogonehaywire@gmail.com"
 #define RECIPIENT_NAME "steam team"
+
+#define RXD2 16
+#define TXD2 17
+
+HardwareSerial pmsSerial(2);
 
 WiFiClientSecure ssl_client;
 SMTPClient smtp(ssl_client);
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(9600);
+  pmsSerial.begin(9600, SERIAL_8N1, 16, 17);
+  Serial.print("hello, warming up");
+  delay(90000); 
+  Serial.print("warmup complete");
+}
+
+void SendEmail(){
   Serial.println(RECIPIENT_EMAIL);
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) delay(500);
@@ -52,8 +65,8 @@ void setup() {
 
     msg.headers.add(rfc822_from, String(AUTHOR_NAME) + " <" + AUTHOR_EMAIL + ">");
     msg.headers.add(rfc822_to, String(RECIPIENT_NAME) + " <" + RECIPIENT_EMAIL + ">");
-    msg.headers.add(rfc822_subject, "Hello from the ESP32");
-    msg.text.body("This is a plain text message.");
+    msg.headers.add(rfc822_subject, "Vape detector");
+    msg.text.body("This is a test to see if the district's teacher accounts also filter out emails from our vape detector, if you see this email, please Vannah know. Thanks!");
     //msg.html.body("<html><body><h1>Hello!</h1></body></html>");
      
     // Set NTP config time
@@ -73,5 +86,25 @@ void setup() {
 }
 
 void loop() {
-  
+  if (pmsSerial.available() >= 32) {  // Wait until at least 32 bytes are ready
+    uint8_t buffer[32];
+    int index = 0;
+    // Serial.println("so this is fine");
+    while (index < 32) {
+      buffer[index++] = pmsSerial.read();
+    }
+
+
+    if (buffer[0] == 0x42 && buffer[1] == 0x4D) {
+      int pm25 = (buffer[12] << 8) + buffer[13];
+      Serial.println("working??");
+      Serial.print("PM2.5: ");
+      Serial.print(pm25);
+      Serial.println(" ug/m3");
+      if (pm25 > 10000){
+        SendEmail();
+        delay(100000);
+      }
+    }
+  }
 }
