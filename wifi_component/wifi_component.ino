@@ -86,25 +86,55 @@ void SendEmail(){
 }
 
 void loop() {
-  if (pmsSerial.available() >= 32) {  // Wait until at least 32 bytes are ready
-    uint8_t buffer[32];
-    int index = 0;
-    // Serial.println("so this is fine");
-    while (index < 32) {
-      buffer[index++] = pmsSerial.read();
-    }
+  // Wait for start byte
+  if (!pmsSerial.available()) return;
+  uint8_t byte1 = pmsSerial.read();
+  if (byte1 != 0x42) return;
 
+  // Wait for second start byte with timeout
+  unsigned long t = millis();
+  while (!pmsSerial.available()) {
+    if (millis() - t > 50) return;
+  }
+  uint8_t byte2 = pmsSerial.read();
+  if (byte2 != 0x4D) return;
 
-    if (buffer[0] == 0x42 && buffer[1] == 0x4D) {
-      int pm25 = (buffer[12] << 8) + buffer[13];
-      Serial.println("working??");
-      Serial.print("PM2.5: ");
-      Serial.print(pm25);
-      Serial.println(" ug/m3");
-      if (pm25 > 10000){
-        SendEmail();
-        delay(100000);
-      }
+  // Read remaining 30 bytes with timeout
+  uint8_t frame[30];
+  int index = 0;
+  t = millis();
+  while (index < 30) {
+    if (pmsSerial.available()) {
+      frame[index++] = pmsSerial.read();
     }
+    if (millis() - t > 100) {
+      Serial.println("Timeout");
+      return;
+    }
+  }
+
+  // Checksum: sum of 0x42 + 0x4D + first 28 bytes of frame
+  uint16_t checksum = 0x42 + 0x4D;
+  for (int i = 0; i < 28; i++) {
+    checksum += frame[i];
+  }
+  uint16_t frameChecksum = (frame[28] << 8) | frame[29];
+
+  Serial.print("Calculated: ");
+  Serial.println(checksum);
+  Serial.print("Frame checksum: ");
+  Serial.println(frameChecksum);
+
+  if (checksum != frameChecksum) {
+    Serial.println("Checksum failed");
+    return;
+  }
+
+  // Parse PM2.5 (bytes 10-11 of frame, which is bytes 12-13 of full packet)
+  int pm25 = (frame[10] << 8) | frame[11];
+  if (pm25 >= 0 && pm25 <= 500) {
+    Serial.print("PM2.5: ");
+    Serial.print(pm25);
+    Serial.println(" ug/m3");
   }
 }
