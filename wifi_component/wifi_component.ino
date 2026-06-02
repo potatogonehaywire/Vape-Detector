@@ -33,7 +33,10 @@ const char* password = "b";
 #define RXD2 16
 #define TXD2 17
 
-bool startChecking = false;
+uint16_t pm25 = 0;
+
+unsigned long lastMeasuredTime = 0;
+unsigned long actionDelay = 100000;
 
 HardwareSerial pmsSerial(2);
 
@@ -64,8 +67,8 @@ void SendEmail(){
 
     msg.headers.add(rfc822_from, String(AUTHOR_NAME) + " <" + AUTHOR_EMAIL + ">");
     msg.headers.add(rfc822_to, String(RECIPIENT_NAME) + " <" + RECIPIENT_EMAIL + ">");
-    msg.headers.add(rfc822_subject, "Vape detector");
-    msg.text.body("This is a test to see if the district's teacher accounts also filter out emails from our vape detector, if you see this email, please Vannah know. Thanks!");
+    msg.headers.add(rfc822_subject, "Vape Detected");
+    msg.text.body("PM2.5 has reached above 100 ug/m3");
     //msg.html.body("<html><body><h1>Hello!</h1></body></html>");
      
     // Set NTP config time
@@ -86,33 +89,67 @@ void SendEmail(){
 
 
 void loop() {
-  if (pmsSerial.available()){
-
-    if (startChecking){
-      if (pmsSerial.available() >= 31) {  // Wait until at least 32 bytes are ready
-        uint8_t buffer[31];
-        int index = 0;
-        Serial.println(pmsSerial.available());
-        while (index < 31) {
-          buffer[index++] = pmsSerial.read();
-        }
-
-        if (buffer[0] == 0x4d) {
-          uint16_t pm25 = (buffer[11] << 8) + buffer[12];
-          Serial.print("PM2.5: ");
-          Serial.print(pm25);
-          Serial.println(" ug/m3");
-          startChecking = false;
-        }
-      }
-
-    }else{
-      uint8_t first_byte = 0x42;
-      if (pmsSerial.read() == first_byte){
-        startChecking = true;
-        Serial.println(startChecking);
-      }
+  if (lastMeasuredTime != 0){
+    unsigned long timeNow = millis();
+    actionDelay -= (timeNow - lastMeasuredTime);
+    lastMeasuredTime = millis();
+    if (actionDelay <= 0){
+      actionDelay = 100000;
+      lastMeasuredTime = 0;
     }
   }
-  
+
+  // Wait for the start of a frame
+  if (pmsSerial.available() < 2) return;
+
+  // Peek at potential start bytes
+  if (pmsSerial.peek() != 0x42) {
+    //if (!startChecking){
+      pmsSerial.read(); // discard and keep scanning
+      return;
+    //}
+  }
+  //else{
+  //   startChecking = true;
+  // }
+  // Need full 32 bytes before proceeding
+  if (pmsSerial.available() < 32) return;
+
+  uint8_t buffer[32];
+  pmsSerial.readBytes(buffer, 32);
+
+  // Validate start bytes
+  if (buffer[0] != 0x42 || buffer[1] != 0x4d) {
+    return; // not a valid frame, try again next loop
+  }
+
+  // Checksum validation (sum of bytes 0..29 should equal bytes 30–31)
+  uint16_t checksum = 0;
+  for (int i = 0; i < 30; i++) checksum += buffer[i];
+  uint16_t received = (buffer[30] << 8) | buffer[31];
+  if (checksum != received) {
+    Serial.println("Checksum mismatch!");
+    return;
+  }
+  // After a successful checksum, print all bytes
+  Serial.print("Raw: ");
+  for (int i = 0; i < 32; i++) {
+    Serial.print(buffer[i], HEX);
+    Serial.print(" ");
+  }
+  Serial.println();
+
+  // PM2.5 atmospheric is at bytes 12–13
+  pm25 = (buffer[12] << 8) | buffer[13];
+  Serial.print("PM2.5: ");
+  Serial.print(pm25);
+  Serial.println(" ug/m3");
+  // startChecking = false;
+
+  if (pm25 > 100){
+    if (lastMeasuredTime == 0){
+      SendEmail();
+      lastMeasuredTime = millis();
+    }
+  }
 }
