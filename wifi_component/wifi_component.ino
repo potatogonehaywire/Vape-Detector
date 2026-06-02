@@ -33,6 +33,8 @@ const char* password = "b";
 #define RXD2 16
 #define TXD2 17
 
+bool startChecking = false;
+
 HardwareSerial pmsSerial(2);
 
 WiFiClientSecure ssl_client;
@@ -41,9 +43,6 @@ SMTPClient smtp(ssl_client);
 void setup() {
   Serial.begin(9600);
   pmsSerial.begin(9600, SERIAL_8N1, 16, 17);
-  Serial.print("hello, warming up");
-  delay(90000); 
-  Serial.print("warmup complete");
 }
 
 void SendEmail(){
@@ -85,56 +84,35 @@ void SendEmail(){
   }
 }
 
+
 void loop() {
-  // Wait for start byte
-  if (!pmsSerial.available()) return;
-  uint8_t byte1 = pmsSerial.read();
-  if (byte1 != 0x42) return;
+  if (pmsSerial.available()){
 
-  // Wait for second start byte with timeout
-  unsigned long t = millis();
-  while (!pmsSerial.available()) {
-    if (millis() - t > 50) return;
-  }
-  uint8_t byte2 = pmsSerial.read();
-  if (byte2 != 0x4D) return;
+    if (startChecking){
+      if (pmsSerial.available() >= 31) {  // Wait until at least 32 bytes are ready
+        uint8_t buffer[31];
+        int index = 0;
+        Serial.println(pmsSerial.available());
+        while (index < 31) {
+          buffer[index++] = pmsSerial.read();
+        }
 
-  // Read remaining 30 bytes with timeout
-  uint8_t frame[30];
-  int index = 0;
-  t = millis();
-  while (index < 30) {
-    if (pmsSerial.available()) {
-      frame[index++] = pmsSerial.read();
+        if (buffer[0] == 0x4d) {
+          uint16_t pm25 = (buffer[11] << 8) + buffer[12];
+          Serial.print("PM2.5: ");
+          Serial.print(pm25);
+          Serial.println(" ug/m3");
+          startChecking = false;
+        }
+      }
+
+    }else{
+      uint8_t first_byte = 0x42;
+      if (pmsSerial.read() == first_byte){
+        startChecking = true;
+        Serial.println(startChecking);
+      }
     }
-    if (millis() - t > 100) {
-      Serial.println("Timeout");
-      return;
-    }
   }
-
-  // Checksum: sum of 0x42 + 0x4D + first 28 bytes of frame
-  uint16_t checksum = 0x42 + 0x4D;
-  for (int i = 0; i < 28; i++) {
-    checksum += frame[i];
-  }
-  uint16_t frameChecksum = (frame[28] << 8) | frame[29];
-
-  Serial.print("Calculated: ");
-  Serial.println(checksum);
-  Serial.print("Frame checksum: ");
-  Serial.println(frameChecksum);
-
-  if (checksum != frameChecksum) {
-    Serial.println("Checksum failed");
-    return;
-  }
-
-  // Parse PM2.5 (bytes 10-11 of frame, which is bytes 12-13 of full packet)
-  int pm25 = (frame[10] << 8) | frame[11];
-  if (pm25 >= 0 && pm25 <= 500) {
-    Serial.print("PM2.5: ");
-    Serial.print(pm25);
-    Serial.println(" ug/m3");
-  }
+  
 }
